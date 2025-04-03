@@ -19,7 +19,7 @@ class GoToPose(Node):
         super().__init__('navigation_goal_action_client')
         # params for automatic exploration
         self.action_client = ActionClient(self, NavigateToPose, 'navigate_to_pose')
-        self.goal_coords = [[7., -11.5], [-8., -13.], [6., 4.], [-9.5, 3.]]
+        self.goal_coords = [[7., -11.5], [-9.5, 3.], [-8., -13.], [6., 4.]]
         self.current_goal = 0
         self.explore_mode = True
         
@@ -92,40 +92,66 @@ class GoToPose(Node):
             image = self.bridge.imgmsg_to_cv2(data, 'bgr8')
         except Exception as e:
             print(e)
+        
+        hsv_blue_lower = np.array([120 - self.sensitivity, 100, 100])
+        hsv_blue_upper = np.array([120 + self.sensitivity, 255, 255])
+        
+        hsv_green_lower = np.array([60 - self.sensitivity, 100, 100])
+        hsv_green_upper = np.array([60 + self.sensitivity, 255, 255])
+        
+        hsv_red0_lower = np.array([0, 100, 100])
+        hsv_red0_upper = np.array([0 + self.sensitivity, 255, 255])
+        hsv_red180_lower = np.array([180 - self.sensitivity, 100, 100])
+        hsv_red180_upper = np.array([180, 255, 255])
+        
+        hsv_image = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
+        
+        blue_mask = cv2.inRange(hsv_image, hsv_blue_lower, hsv_blue_upper)
+        green_mask = cv2.inRange(hsv_image, hsv_green_lower, hsv_green_upper)
+        red0_mask = cv2.inRange(hsv_image, hsv_red0_lower, hsv_red0_upper)
+        red180_mask = cv2.inRange(hsv_image, hsv_red180_lower, hsv_red180_upper)  
+
+        red_mask = cv2.bitwise_or(red0_mask, red180_mask)
+        bg_mask = cv2.bitwise_or(blue_mask, green_mask)
+        all_mask = cv2.bitwise_or(red_mask, bg_mask)
+        
+        blue_contours, blue_hierachy = cv2.findContours(blue_mask, cv2.RETR_LIST, cv2.CHAIN_APPROX_SIMPLE)
+        all_countours, all_hierachy = cv2.findContours(all_mask, cv2.RETR_LIST, cv2.CHAIN_APPROX_SIMPLE)
+
+        # draw bounding box around each contour:
+        minArea = 30
+        for contour in all_countours:
+            if cv2.contourArea(contour) > minArea:
+                x,y,w,h = cv2.boundingRect(contour)
+                cv2.rectangle(image, (x,y), (x+w, y+h), (255, 255, 255), 5)
+        # show filtered image in window       
         cv2.namedWindow('camera_Feed',cv2.WINDOW_NORMAL)
         cv2.imshow('camera_Feed', image)
         cv2.resizeWindow('camera_Feed',320,240)
         cv2.waitKey(3)
-        
-        hsv_blue_lower = np.array([120 - self.sensitivity, 100, 100])
-        hsv_blue_upper = np.array([120 + self.sensitivity, 255, 255])
-        hsv_image = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
-        blue_mask = cv2.inRange(hsv_image, hsv_blue_lower, hsv_blue_upper)
-        blue_image = cv2.bitwise_and(image, image, mask=blue_mask)
-        blue_contours, blue_hierachy = cv2.findContours(blue_mask, cv2.RETR_LIST, cv2.CHAIN_APPROX_SIMPLE)
-
-        minArea = 30
         # Loop over the contours
         if len(blue_contours)>0:
-            
             c = max(blue_contours, key=cv2.contourArea)
             M = cv2.moments(c)
-            cx = int(M['m10']/M['m00'])
-            cy = int(M['m01']/M['m00'])
-            if cv2.contourArea(c) > minArea:
-                self.blue_found = True
-            else:
-                self.blue_found = False
-            #Check if a flag has been set = colour object detected - follow the colour object
-            if self.blue_found == True:
-                self.explore_mode = False
-                if cv2.contourArea(c) > 100000:
-                    # Too close to object, need to move backwards
-                    self.stop = True
-                    
-                elif cv2.contourArea(c) < 100000:
-                    # Too far away from object, need to move forwards
-                    self.target = cx
+            if M['m00'] != 0:
+                cx = int(M['m10']/M['m00'])
+                cy = int(M['m01']/M['m00'])
+                if cv2.contourArea(c) > minArea:
+                    self.blue_found = True
+                else:
+                    self.blue_found = False
+                #Check if a flag has been set = colour object detected - follow the colour object
+                if self.blue_found == True:
+                    self.explore_mode = False
+                    if cv2.contourArea(c) > 100000:
+                        # Too close to object, need to move backwards
+                        self.stop = True
+                        
+                    elif cv2.contourArea(c) < 100000:
+                        # Too far away from object, need to move forwards
+                        self.target = cx
+             
+        
                     
     def stop_moving(self):
         print('stopping')        
